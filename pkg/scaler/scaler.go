@@ -261,31 +261,7 @@ func (sc *Scaler) loop(ctx context.Context) {
 			}
 		case reply := <-sc.ensureAvailable:
 			// set time to scale down
-			if time.Now().After(scaleDownAt.Add(sc.TTL / -2)) {
-				path := fmt.Sprintf("/metadata/annotations/%s", JsonPatchEscape(KeyScaleDownAt))
-
-				patch := []map[string]string{
-					{
-						"op":    "replace",
-						"path":  path,
-						"value": time.Now().Add(sc.TTL).Format(time.RFC3339),
-					},
-				}
-
-				body, err := json.Marshal(patch)
-				if err != nil {
-					log.Printf("failed to marshal patch to json: %v", err)
-				}
-
-				if _, err := sc.Client.AppsV1().Deployments(sc.Namespace).
-					Patch(sc.Name, types.JSONPatchType, body); err != nil {
-					log.Printf("%s/%s: failed to patch: %v",
-						"Deployment", sc.Name, err)
-				}
-
-				log.Printf("%s/%s: updated scaleDownAt to %s from now",
-					"Deployment", sc.Name, sc.TTL)
-			}
+			sc.extendScaleDownAtMaybe(scaleDownAt)
 
 			if readyAddresses > 0 {
 				reply <- true
@@ -313,6 +289,10 @@ func (sc *Scaler) loop(ctx context.Context) {
 				}
 			}
 		case <-time.After(1 * time.Second):
+			if connCount > 0 {
+				sc.extendScaleDownAtMaybe(scaleDownAt)
+			}
+
 			if connCount == 0 && replicas > 0 && time.Now().After(scaleDownAt) {
 				log.Printf("%s/%s: scaling down after %s: replicas=%d connections=%d",
 					"Deployment", sc.Name, sc.TTL, replicas, connCount)
@@ -324,6 +304,36 @@ func (sc *Scaler) loop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (sc *Scaler) extendScaleDownAtMaybe(scaleDownAt time.Time) {
+	if !time.Now().After(scaleDownAt.Add(sc.TTL / -2)) {
+		return
+	}
+
+	path := fmt.Sprintf("/metadata/annotations/%s", JsonPatchEscape(KeyScaleDownAt))
+
+	patch := []map[string]string{
+		{
+			"op":    "replace",
+			"path":  path,
+			"value": time.Now().Add(sc.TTL).Format(time.RFC3339),
+		},
+	}
+
+	body, err := json.Marshal(patch)
+	if err != nil {
+		log.Printf("failed to marshal patch to json: %v", err)
+	}
+
+	if _, err := sc.Client.AppsV1().Deployments(sc.Namespace).
+		Patch(sc.Name, types.JSONPatchType, body); err != nil {
+		log.Printf("%s/%s: failed to patch: %v",
+			"Deployment", sc.Name, err)
+	}
+
+	log.Printf("%s/%s: updated scaleDownAt to %s from now",
+		"Deployment", sc.Name, sc.TTL)
 }
 
 func (sc *Scaler) updateScale(resourceVersion string, replicas int32) error {
