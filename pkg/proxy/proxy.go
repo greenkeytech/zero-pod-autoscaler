@@ -41,8 +41,7 @@ func BiDiCopy(a, b *net.TCPConn) error {
 		errch2 <- err
 	}()
 
-	err1 := <-errch1
-	err2 := <-errch2
+	err1, err2 := <-errch1, <-errch2
 
 	// ignore connection resets because they happen all the time with docker client
 	if errors.Is(err1, syscall.ECONNRESET) {
