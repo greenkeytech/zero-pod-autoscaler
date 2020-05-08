@@ -6,14 +6,20 @@ use. It can work alongside an HPA: when scaled to zero, the HPA
 ignores the Deployment; once scaled back to one, the HPA may scale up
 further.
 
-To do this, ZPA is a **TCP proxy** in front of the Service load balancing
-a Deployment. This allows the ZPA to track the number of connections
-and scale the Deployment to zero when the connection count has been
-zero for some time period.
+To do this, ZPA is a **TCP proxy** in front of the Service load
+balancing a Deployment. This allows the ZPA to track the number of
+connections and scale the Deployment to zero when the connection count
+has been zero for some time period.
 
 If scaled to zero, an incoming connection triggers a scale-to-one
 action. Once Service's Endpoints include a "ready" address, the
 connection can complete, hopefully before the client times out.
+
+## Status
+
+Alpha-quality. Currently deployed successfully for some internal
+use-cases. Currently recommended for use only if willing to read
+and/or customize the code.
 
 ## Usage
 
