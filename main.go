@@ -44,7 +44,10 @@ func ListenAndProxy(ctx context.Context, addr, target string, sc *scaler.Scaler)
 			return fmt.Errorf("failed to accept connection: %w", err)
 		}
 
+		log.Printf("%s->%s: accept connection", conn.RemoteAddr(), conn.LocalAddr())
+
 		go func() {
+			start := time.Now()
 			defer conn.Close()
 
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -56,8 +59,11 @@ func ListenAndProxy(ctx context.Context, addr, target string, sc *scaler.Scaler)
 				return proxy.ProxyTo(conn, target)
 			})
 			if err != nil {
-				log.Printf("failed to proxy: %v", err)
+				log.Printf("%s->%s: failed to proxy: %v", conn.RemoteAddr(), conn.LocalAddr(), err)
 			}
+
+			log.Printf("%s->%s: close connection %s",
+				conn.RemoteAddr(), conn.LocalAddr(), time.Since(start))
 		}()
 	}
 }

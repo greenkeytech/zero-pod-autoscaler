@@ -17,8 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"syscall"
+	"time"
 )
 
 // BiDiCopy copies bidirectional streams.
@@ -66,11 +68,14 @@ func BiDiCopy(a, b *net.TCPConn) error {
 // ProxyTo dials a connection to remote then (bi-directionally) copies
 // everything from src to the new connection.
 func ProxyTo(src net.Conn, remote string) error {
-	dst, err := net.Dial("tcp", remote)
+	dst, err := net.DialTimeout("tcp", remote, 5*time.Second)
 	if err != nil {
 		return err
 	}
 	defer dst.Close()
+
+	log.Printf("%s->%s: connected to upstream %s",
+		src.RemoteAddr(), src.LocalAddr(), remote)
 
 	_dst, ok := dst.(*net.TCPConn)
 	if !ok {

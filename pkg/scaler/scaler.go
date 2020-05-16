@@ -274,7 +274,6 @@ func (sc *Scaler) loop(ctx context.Context) {
 
 			if replicas == 0 {
 				go func() { sc.scaleUp <- 0 }()
-
 			}
 		case attemptNumber := <-sc.scaleUp:
 			if replicas == 0 {
