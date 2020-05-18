@@ -44,10 +44,10 @@ type Scaler struct {
 	// actual target also.
 	Target string
 
-	TTL             time.Duration
-	ensureAvailable chan (chan bool)
-	scaleUp         chan int
-	connectionInc   chan int
+	TTL              time.Duration
+	availableRequest chan chan chan struct{}
+	scaleUp          chan int
+	connectionInc    chan int
 
 	updated chan interface{}
 	deleted chan interface{}
@@ -109,7 +109,7 @@ func New(
 
 	updated := make(chan interface{})
 	deleted := make(chan interface{})
-	ensureAvailable := make(chan (chan bool))
+	availableRequest := make(chan chan chan struct{})
 	scaleUp := make(chan int)
 	connectionInc := make(chan int)
 
@@ -136,16 +136,16 @@ func New(
 	}
 
 	sc := &Scaler{
-		Client:          client,
-		Namespace:       namespace,
-		Name:            deploy.Name,
-		Target:          target,
-		TTL:             ttl,
-		ensureAvailable: ensureAvailable,
-		scaleUp:         scaleUp,
-		connectionInc:   connectionInc,
-		updated:         updated,
-		deleted:         deleted,
+		Client:           client,
+		Namespace:        namespace,
+		Name:             deploy.Name,
+		Target:           target,
+		TTL:              ttl,
+		availableRequest: availableRequest,
+		scaleUp:          scaleUp,
+		connectionInc:    connectionInc,
+		updated:          updated,
+		deleted:          deleted,
 	}
 	go sc.loop(ctx)
 
@@ -178,8 +178,12 @@ func (sc *Scaler) loop(ctx context.Context) {
 	replicas := int32(-1)
 	readyAddresses := -1
 	notReadyAddresses := -1
-	waiters := make([]chan<- bool, 0)
 	connCount := 0
+
+	// channel is closed when upstream is available
+	var available chan struct{}
+	closedChan := make(chan struct{})
+	close(closedChan)
 
 	resourceVersion := ""
 
@@ -214,7 +218,8 @@ func (sc *Scaler) loop(ctx context.Context) {
 					continue
 				}
 
-				if len(waiters) == 0 {
+				// nothing is waiting
+				if available == nil {
 					continue
 				}
 
@@ -227,14 +232,9 @@ func (sc *Scaler) loop(ctx context.Context) {
 						"Endpoints", resource.Name, sc.Target, err)
 				}
 
-				log.Printf("%s connectable; notifying waiters: %d",
-					resource.Name, len(waiters))
-
-				for _, w := range waiters {
-					w <- true
-				}
-
-				waiters = make([]chan<- bool, 0)
+				log.Printf("%s available; notifying waiters", resource.Name)
+				close(available)
+				available = nil
 			case *appsv1.Deployment:
 				resourceVersion = resource.ResourceVersion
 
@@ -259,18 +259,21 @@ func (sc *Scaler) loop(ctx context.Context) {
 			case *appsv1.Deployment:
 				log.Fatalf("%s/%s: deleted", "Deployment", resource.Name)
 			}
-		case reply := <-sc.ensureAvailable:
+		case reply := <-sc.availableRequest:
 			// set time to scale down
 			sc.extendScaleDownAtMaybe(scaleDownAt)
 
 			if readyAddresses > 0 {
-				reply <- true
+				// is currently available; send the already-closed channel
+				reply <- closedChan
 				continue
 			}
 
-			// nothing ready; wait for scale up
-
-			waiters = append(waiters, reply)
+			// nothing ready, reply with channel that gets closed when ready
+			if available == nil {
+				available = make(chan struct{})
+			}
+			reply <- available
 
 			if replicas == 0 {
 				go func() { sc.scaleUp <- 0 }()
@@ -354,17 +357,18 @@ func (sc *Scaler) updateScale(resourceVersion string, replicas int32) error {
 	return nil
 }
 
-func (sc *Scaler) WithAvailable(ctx context.Context, f func() error) error {
+func (sc *Scaler) UseConnection(f func() error) error {
 	sc.connectionInc <- 1
-	defer func() { sc.connectionInc <- (-1) }()
+	err := f()
+	sc.connectionInc <- -1
+	return err
+}
 
-	reply := make(chan bool)
-	sc.ensureAvailable <- reply
-
-	select {
-	case <-reply:
-		return f()
-	case <-ctx.Done():
-		return fmt.Errorf("context done before available")
-	}
+// Available returns a channel that will be closed when upstream is
+// available. The returned channel may already be closed if upstream
+// is currently available.
+func (sc *Scaler) Available() (available chan struct{}) {
+	reply := make(chan chan struct{})
+	sc.availableRequest <- reply
+	return <-reply
 }

@@ -53,16 +53,36 @@ func ListenAndProxy(ctx context.Context, addr, target string, sc *scaler.Scaler)
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer cancel()
 
-			err := sc.WithAvailable(ctx, func() error {
-				// race condition here: could now be
-				// unavailable, but not much we can do
-				return proxy.ProxyTo(conn, target)
+			err := sc.UseConnection(func() error {
+				// race condition here: could become
+				// unavailable immediately after
+				// reporting available, but not much
+				// we can do
+
+				select {
+				case <-sc.Available():
+					return proxy.ProxyTo(conn, target)
+				case <-time.After(0):
+					// was not immediately available; continue below
+				}
+
+				log.Printf("%s->%s: waiting for upstream to become available",
+					conn.RemoteAddr(), conn.LocalAddr())
+				select {
+				case <-sc.Available():
+					log.Printf("%s->%s: upstream available after %s",
+						conn.RemoteAddr(), conn.LocalAddr(),
+						time.Since(start))
+					return proxy.ProxyTo(conn, target)
+				case <-ctx.Done():
+					return fmt.Errorf("context done before available")
+				}
 			})
 			if err != nil {
 				log.Printf("%s->%s: failed to proxy: %v", conn.RemoteAddr(), conn.LocalAddr(), err)
 			}
 
-			log.Printf("%s->%s: close connection %s",
+			log.Printf("%s->%s: close connection after %s",
 				conn.RemoteAddr(), conn.LocalAddr(), time.Since(start))
 		}()
 	}
