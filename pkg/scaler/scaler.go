@@ -147,7 +147,6 @@ func New(
 		updated:          updated,
 		deleted:          deleted,
 	}
-	go sc.loop(ctx)
 
 	return sc, nil
 }
@@ -174,7 +173,7 @@ func (sc *Scaler) TryConnect(ctx context.Context) error {
 	}
 }
 
-func (sc *Scaler) loop(ctx context.Context) {
+func (sc *Scaler) Run(ctx context.Context) error {
 	replicas := int32(-1)
 	readyAddresses := -1
 	notReadyAddresses := -1
@@ -192,8 +191,7 @@ func (sc *Scaler) loop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("context canceled; scaler loop exiting")
-			return
+			return fmt.Errorf("%v", ctx.Err())
 		case i := <-sc.connectionInc:
 			connCount += i
 		case obj := <-sc.updated:
