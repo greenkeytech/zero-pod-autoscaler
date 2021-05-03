@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -228,11 +229,18 @@ func main() {
 		log.Fatal(err)
 	}
 
+	nsb, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		panic(err.Error())
+	}
+	namespace := string(nsb)
+
 	// the kube flags bound above include a --namespace flag...
-	namespace := "default"
 	if configOverrides.Context.Namespace != "" {
 		namespace = configOverrides.Context.Namespace
 	}
+
+	fmt.Printf("Determined namespace: %s\n", namespace)
 
 	clientset, err := kubeconfig.BuildClientset(loadingRules, configOverrides)
 	if err != nil {
